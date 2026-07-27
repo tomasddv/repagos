@@ -26,6 +26,20 @@ def load_db_from_upload(uploaded_file):
     return json.loads(uploaded_file.getvalue().decode("utf-8"))
 
 
+def band_label(pct, hl):
+    if hl <= 0:
+        return "Venta 0"
+    if pct < 25:
+        return "0%-25%"
+    if pct < 50:
+        return "25%-50%"
+    if pct < 75:
+        return "50%-75%"
+    if pct < 100:
+        return "75%-99%"
+    return "100%+"
+
+
 def get_repayment(edf):
     repayment = edf.get("repayment") or {}
     return {
@@ -35,6 +49,72 @@ def get_repayment(edf):
         "minimum": repayment.get("minimum") or 0,
         "band": (repayment.get("band") or {}).get("label") or "",
     }
+
+
+def available_periods(db):
+    periods = set()
+    for customer in db.get("customers", []):
+        monthly = customer.get("monthlySalesByBusiness") or {}
+        for business_data in monthly.values():
+            periods.update((business_data or {}).keys())
+    return sorted(periods)
+
+
+def selected_periods(db, period_mode):
+    periods = available_periods(db)
+    if not periods:
+        return []
+    if period_mode == "Total cargado":
+        return periods
+    if period_mode == "Mes corriente":
+        return [periods[-1]]
+    return periods[-3:]
+
+
+def business_hl_for_period(customer, business, periods, average=False):
+    monthly = customer.get("monthlySalesByBusiness") or {}
+    values = monthly.get(business) or {}
+    total = sum(float(values.get(period, 0) or 0) for period in periods)
+    if average and periods:
+        return round(total / len(periods), 3)
+    return round(total, 3)
+
+
+def repayment_for_values(hl, target):
+    pct = round((hl / target) * 100) if target else 0
+    return {
+        "hl": round(hl, 3),
+        "pct": pct,
+        "target": target,
+        "minimum": round(target * 0.75, 3),
+        "band": band_label(pct, hl),
+    }
+
+
+def period_repayment_map(db, periods, average):
+    edfs = db.get("edfs", [])
+    customers = {str(customer.get("id")): customer for customer in db.get("customers", [])}
+    repayment = {}
+    grouped = {}
+    for edf in edfs:
+        if edf.get("status") != "PDV" or not edf.get("customerId"):
+            continue
+        key = (str(edf.get("customerId")), edf.get("business") or "OTROS")
+        grouped.setdefault(key, []).append(edf)
+
+    for group in grouped.values():
+        group.sort(key=lambda item: (item.get("asset") or "", item.get("serial") or ""))
+
+    for (customer_id, business), group in grouped.items():
+        customer = customers.get(customer_id) or {}
+        available_hl = business_hl_for_period(customer, business, periods, average=average)
+        for edf in group:
+            base = get_repayment(edf)
+            target = base["target"] or 1.6
+            assigned = min(available_hl, target)
+            available_hl = max(0, round(available_hl - assigned, 3))
+            repayment[edf.get("id")] = repayment_for_values(assigned, target)
+    return repayment
 
 
 def status_label(status):
@@ -48,11 +128,14 @@ def status_label(status):
     return labels.get(status or "", status or "-")
 
 
-def build_edf_rows(db):
+def build_edf_rows(db, period_mode="Total cargado"):
+    periods = selected_periods(db, period_mode)
+    use_period = period_mode != "Total cargado"
+    period_map = period_repayment_map(db, periods, average=period_mode == "Trimestre promedio") if use_period else {}
     rows = []
     for edf in db.get("edfs", []):
         customer = edf.get("customer") or {}
-        repayment = get_repayment(edf)
+        repayment = period_map.get(edf.get("id"), get_repayment(edf))
         rows.append({
             "Cliente": customer.get("name") or "",
             "Codigo cliente": customer.get("id") or edf.get("customerId") or "",
@@ -70,6 +153,8 @@ def build_edf_rows(db):
             "Minimo": repayment["minimum"],
             "% Repago": repayment["pct"],
             "Banda": repayment["band"],
+            "Periodo": period_mode,
+            "Meses usados": ", ".join(periods) if periods else "Sin ventas",
         })
     return pd.DataFrame(rows)
 
@@ -116,7 +201,9 @@ def render_filters(df):
         filtered = filtered[filtered["Promotor"] == promoter]
     if query:
         q = query.lower()
-        filtered = filtered[filtered.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)]
+        code_match = filtered["Codigo cliente"].astype(str).str.lower().str.contains(q, na=False)
+        full_match = filtered.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)
+        filtered = filtered[code_match | full_match]
     return filtered
 
 
@@ -147,7 +234,8 @@ if db is None:
     st.write("Subi el archivo `db.json` desde la barra lateral, o agregalo al repo en `data/db.json`.")
     st.stop()
 
-edf_df = build_edf_rows(db)
+period_mode = st.selectbox("Periodo de repago", ["Total cargado", "Trimestre promedio", "Mes corriente"])
+edf_df = build_edf_rows(db, period_mode)
 customer_df = build_customer_rows(db)
 
 placed = edf_df[edf_df["Estado"] == "En PDV"] if not edf_df.empty else edf_df
