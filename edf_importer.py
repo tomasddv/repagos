@@ -244,7 +244,10 @@ def add_sale(customer, business, period, hl):
 def sync_drive(folder_url=DRIVE_URL):
     import gdown
     SOURCE_DIR.mkdir(parents=True, exist_ok=True)
-    return gdown.download_folder(url=folder_url, output=str(SOURCE_DIR), quiet=False, use_cookies=False, remaining_ok=True) or []
+    try:
+        return gdown.download_folder(url=folder_url, output=str(SOURCE_DIR), quiet=False, use_cookies=False) or []
+    except TypeError:
+        return gdown.download_folder(url=folder_url, output=str(SOURCE_DIR), quiet=False) or []
 
 
 def import_data(sync=False, folder_url=DRIVE_URL):
