@@ -186,11 +186,12 @@ def csv_download(df):
 
 
 def render_filters(df):
-    f1, f2, f3, f4 = st.columns(4)
+    f1, f2, f3, f4, f5 = st.columns(5)
     business = f1.selectbox("Negocio", ["Todos"] + sorted(df["Negocio"].dropna().unique().tolist()))
     supervisor = f2.selectbox("Supervisor", ["Todos"] + sorted(df["Supervisor"].dropna().unique().tolist()))
     promoter = f3.selectbox("Promotor", ["Todos"] + sorted(df["Promotor"].dropna().unique().tolist()))
-    query = f4.text_input("Buscar")
+    search_by = f4.selectbox("Buscar por", ["Todo", "Codigo cliente", "Cliente", "Activo", "Serie"])
+    query = f5.text_input("Buscar")
 
     filtered = df.copy()
     if business != "Todos":
@@ -201,9 +202,18 @@ def render_filters(df):
         filtered = filtered[filtered["Promotor"] == promoter]
     if query:
         q = query.lower()
-        code_match = filtered["Codigo cliente"].astype(str).str.lower().str.contains(q, na=False)
-        full_match = filtered.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)
-        filtered = filtered[code_match | full_match]
+        if search_by == "Codigo cliente":
+            normalized = filtered["Codigo cliente"].astype(str).str.replace(r"\.0$", "", regex=True).str.lower()
+            filtered = filtered[normalized.str.startswith(q, na=False) | normalized.eq(q)]
+        elif search_by == "Cliente":
+            filtered = filtered[filtered["Cliente"].astype(str).str.lower().str.contains(q, na=False)]
+        elif search_by == "Activo":
+            filtered = filtered[filtered["Activo"].astype(str).str.lower().str.contains(q, na=False)]
+        elif search_by == "Serie":
+            filtered = filtered[filtered["Serie"].astype(str).str.lower().str.contains(q, na=False)]
+        else:
+            full_match = filtered.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)
+            filtered = filtered[full_match]
     return filtered
 
 
