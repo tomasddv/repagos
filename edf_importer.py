@@ -265,9 +265,6 @@ def import_data(sync=False, folder_url=DRIVE_URL):
     missing = [name for name, file in {
         "semaforo": semaforo_file,
         "clientes": clientes_file,
-        "pi": pi_file,
-        "edf 1": edf1_file,
-        "edf 2": edf2_file,
     }.items() if file is None]
     if missing:
         raise FileNotFoundError(f"Faltan archivos en Drive: {', '.join(missing)}")
@@ -275,22 +272,28 @@ def import_data(sync=False, folder_url=DRIVE_URL):
     semaforo = read_excel_any(semaforo_file, "Page1")
     clientes = read_excel_any(clientes_file, "Clientes")
     pi_sheets = []
-    for sheet, pi_type in [("CZA", "CZA"), ("UNG", "UNG"), ("RB", "RB")]:
-        try:
-            df = read_excel_any(pi_file, sheet)
-            df["__pitype"] = pi_type
-            pi_sheets.append(df)
-        except Exception:
-            pass
+    if pi_file:
+        for sheet, pi_type in [("CZA", "CZA"), ("UNG", "UNG"), ("RB", "RB")]:
+            try:
+                df = read_excel_any(pi_file, sheet)
+                df["__pitype"] = pi_type
+                pi_sheets.append(df)
+            except Exception:
+                pass
     pi_rows = pd.concat(pi_sheets, ignore_index=True) if pi_sheets else pd.DataFrame()
 
-    edf_rows = pd.concat([read_excel_any(edf1_file, "Browser"), read_excel_any(edf2_file, "Browser")], ignore_index=True)
+    edf_frames = []
+    for file in [edf1_file, edf2_file]:
+        if file:
+            edf_frames.append(read_excel_any(file, "Browser"))
+    edf_rows = pd.concat(edf_frames, ignore_index=True) if edf_frames else pd.DataFrame()
     asset_by_serial = {}
-    for row in edf_rows.to_dict("records"):
-        serial = first(row, ["numerodeserie", "nroserie", "serie", "serial"])
-        asset = first(row, ["numerodeactivo", "nrodeactivo", "activo", "nroactivo"])
-        if serial and asset and serial not in asset_by_serial:
-            asset_by_serial[serial] = asset
+    if not edf_rows.empty:
+        for row in edf_rows.to_dict("records"):
+            serial = first(row, ["numerodeserie", "nroserie", "serie", "serial"])
+            asset = first(row, ["numerodeactivo", "nrodeactivo", "activo", "nroactivo"])
+            if serial and asset and serial not in asset_by_serial:
+                asset_by_serial[serial] = asset
 
     customers = {}
     for row in clientes.to_dict("records"):

@@ -36,11 +36,14 @@ https://drive.google.com/drive/folders/1cukgXLUaPsEDK_yD7tSwgaBFZAbiDUot
 Archivos esperados:
 
 - Semaforo actualizado `.xlsx`
+- Plantilla clientes `.xlsx`
+- todos los `venta*.txt`
+
+Opcionales:
+
 - `edf 1.xlsx`
 - `edf 2.xlsx`
 - `PI 2026...xlsb`
-- Plantilla clientes `.xlsx`
-- todos los `venta*.txt`
 
 Como alternativa, para generar `db.json`, usar la app local Node y el boton Importar. Luego copiar:
 
