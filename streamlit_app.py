@@ -4,6 +4,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from edf_importer import DRIVE_URL, import_data
+
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
@@ -125,6 +127,18 @@ with st.sidebar:
     st.header("Datos")
     uploaded = st.file_uploader("Subir db.json", type=["json"])
     st.caption("Tambien puede existir como data/db.json dentro del repo.")
+    st.divider()
+    st.header("Google Drive")
+    drive_url = st.text_input("Carpeta Drive", value=DRIVE_URL)
+    if st.button("Sincronizar Drive e importar"):
+        try:
+            with st.spinner("Leyendo Drive y generando base..."):
+                db = import_data(sync=True, folder_url=drive_url)
+            st.success("Base actualizada desde Drive.")
+            st.rerun()
+        except Exception as exc:
+            st.error("No se pudo importar desde Drive.")
+            st.exception(exc)
 
 db = load_db_from_upload(uploaded) or load_db_from_disk()
 
