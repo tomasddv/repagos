@@ -211,7 +211,20 @@ def render_filters(df):
         filtered = filtered[filtered["Promotor"] == promoter]
     if query:
         q = query.lower()
-        if search_by == "Cliente":
+        normalized_query = q.replace("%", "").replace("-", " ").strip()
+        if normalized_query in {"venta 0", "venta cero", "sin venta"}:
+            filtered = filtered[filtered["Banda"].astype(str).str.lower().eq("venta 0")]
+        elif normalized_query in {"0 25", "0 a 25"}:
+            filtered = filtered[filtered["Banda"].astype(str).str.lower().eq("0%-25%")]
+        elif normalized_query in {"25 50", "25 a 50"}:
+            filtered = filtered[filtered["Banda"].astype(str).str.lower().eq("25%-50%")]
+        elif normalized_query in {"50 75", "50 a 75"}:
+            filtered = filtered[filtered["Banda"].astype(str).str.lower().eq("50%-75%")]
+        elif normalized_query in {"75 99", "75 100", "75 a 100"}:
+            filtered = filtered[filtered["Banda"].astype(str).str.lower().eq("75%-99%")]
+        elif normalized_query in {"100", "100 mas", "100 plus"}:
+            filtered = filtered[filtered["Banda"].astype(str).str.lower().eq("100%+")]
+        elif search_by == "Cliente":
             filtered = filtered[filtered["Cliente"].astype(str).str.lower().str.contains(q, na=False)]
         elif search_by == "Activo":
             filtered = filtered[filtered["Activo"].astype(str).str.lower().str.contains(q, na=False)]
