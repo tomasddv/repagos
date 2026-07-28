@@ -462,10 +462,10 @@ def allocate_repayment(edfs, customers):
         if not customer:
             continue
         available = customer["salesByBusiness"].get(business, 0)
+        total_target = sum(edf["repayment"]["target"] for edf in group) or 1
         for edf in group:
             target = edf["repayment"]["target"]
-            assigned = min(available, target)
-            available = max(0, round(available - assigned, 3))
+            assigned = min(target, available * (target / total_target))
             pct = round((assigned / target) * 100) if target else 0
             edf["repayment"]["hl"] = round(assigned, 3)
             edf["repayment"]["pct"] = pct

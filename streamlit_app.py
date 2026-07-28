@@ -108,11 +108,11 @@ def period_repayment_map(db, periods, average):
     for (customer_id, business), group in grouped.items():
         customer = customers.get(customer_id) or {}
         available_hl = business_hl_for_period(customer, business, periods, average=average)
+        total_target = sum((get_repayment(edf)["target"] or 1.6) for edf in group) or 1
         for edf in group:
             base = get_repayment(edf)
             target = base["target"] or 1.6
-            assigned = min(available_hl, target)
-            available_hl = max(0, round(available_hl - assigned, 3))
+            assigned = min(target, available_hl * (target / total_target))
             repayment[edf.get("id")] = repayment_for_values(assigned, target)
     return repayment
 
