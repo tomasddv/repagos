@@ -198,6 +198,11 @@ def render_filters(df):
     query = f5.text_input("Buscar")
 
     filtered = df.copy()
+    if query and search_by == "Codigo cliente":
+        q = query.lower()
+        normalized = filtered["Codigo cliente"].astype(str).str.replace(r"\.0$", "", regex=True).str.lower()
+        return filtered[normalized.str.startswith(q, na=False) | normalized.eq(q)]
+
     if business != "Todos":
         filtered = filtered[filtered["Negocio"] == business]
     if supervisor != "Todos":
@@ -206,10 +211,7 @@ def render_filters(df):
         filtered = filtered[filtered["Promotor"] == promoter]
     if query:
         q = query.lower()
-        if search_by == "Codigo cliente":
-            normalized = filtered["Codigo cliente"].astype(str).str.replace(r"\.0$", "", regex=True).str.lower()
-            filtered = filtered[normalized.str.startswith(q, na=False) | normalized.eq(q)]
-        elif search_by == "Cliente":
+        if search_by == "Cliente":
             filtered = filtered[filtered["Cliente"].astype(str).str.lower().str.contains(q, na=False)]
         elif search_by == "Activo":
             filtered = filtered[filtered["Activo"].astype(str).str.lower().str.contains(q, na=False)]

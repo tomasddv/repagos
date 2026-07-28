@@ -43,6 +43,10 @@ SUPERVISORS = {
     "VITI ANIBAL": ["FEDERICO BISS"],
 }
 
+CUSTOMER_COMMERCIAL_OVERRIDES = {
+    "3130": {"promoter": "NICOLAS POCHETINO", "supervisor": "BRUNO ISMAEL"},
+}
+
 
 def clean(value):
     if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -398,6 +402,12 @@ def import_data(sync=False, folder_url=DRIVE_URL):
         customer["supervisor"] = supervisor_for_promoter(customer["promoter"])
         if not customer.get("pi") and customer.get("annualHl", 0) >= 1.2:
             customer["potentialPi"] = True
+
+    for customer_id, override in CUSTOMER_COMMERCIAL_OVERRIDES.items():
+        if customer_id in customers:
+            customers[customer_id]["promoter"] = override["promoter"]
+            customers[customer_id]["seller"] = override["promoter"]
+            customers[customer_id]["supervisor"] = override["supervisor"]
 
     allocate_repayment(edfs, customers)
     for edf in edfs:
