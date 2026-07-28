@@ -190,12 +190,15 @@ def csv_download(df):
 
 
 def render_filters(df):
-    f1, f2, f3, f4, f5 = st.columns(5)
+    f1, f2, f3, f4, f5, f6 = st.columns(6)
     business = f1.selectbox("Negocio", ["Todos"] + sorted(df["Negocio"].dropna().unique().tolist()))
     supervisor = f2.selectbox("Supervisor", ["Todos"] + sorted(df["Supervisor"].dropna().unique().tolist()))
     promoter = f3.selectbox("Promotor", ["Todos"] + sorted(df["Promotor"].dropna().unique().tolist()))
-    search_by = f4.selectbox("Buscar por", ["Todo", "Codigo cliente", "Cliente", "Activo", "Serie"])
-    query = f5.text_input("Buscar")
+    state_order = ["En PDV", "Deposito", "Baja definitiva", "Reparacion", "Stock"]
+    states = [state for state in state_order if state in set(df["Estado"].dropna().unique())]
+    status = f4.selectbox("Estado", ["Todos"] + states)
+    search_by = f5.selectbox("Buscar por", ["Todo", "Codigo cliente", "Cliente", "Activo", "Serie"])
+    query = f6.text_input("Buscar")
 
     filtered = df.copy()
     if query and search_by == "Codigo cliente":
@@ -209,6 +212,8 @@ def render_filters(df):
         filtered = filtered[filtered["Supervisor"] == supervisor]
     if promoter != "Todos":
         filtered = filtered[filtered["Promotor"] == promoter]
+    if status != "Todos":
+        filtered = filtered[filtered["Estado"] == status]
     if query:
         q = query.lower()
         normalized_query = q.replace("%", "").replace("-", " ").strip()
