@@ -217,6 +217,8 @@ def ensure_customer(customers, customer_id, name=""):
         customers[customer_id] = {
             "id": customer_id,
             "name": name,
+            "fantasyName": name,
+            "legalName": "",
             "address": "",
             "city": "",
             "route": "",
@@ -300,7 +302,13 @@ def import_data(sync=False, folder_url=DRIVE_URL):
         customer_id = code(first(row, ["cliente", "codcliente", "codigocliente", "nrocliente"]))
         if not customer_id or customer_id == "0":
             continue
-        customer = ensure_customer(customers, customer_id, first(row, ["nombredefantasia", "razonsocial", "nombre", "cliente"]))
+        fantasy_name = first(row, ["nombredefantasia", "nombrefantasia", "fantasia"])
+        legal_name = first(row, ["razonsocial", "nombre", "cliente"])
+        display_name = fantasy_name or legal_name
+        customer = ensure_customer(customers, customer_id, display_name)
+        customer["name"] = display_name or customer.get("name", "")
+        customer["fantasyName"] = fantasy_name or customer.get("fantasyName", "") or display_name
+        customer["legalName"] = legal_name or customer.get("legalName", "")
         customer["address"] = " ".join(x for x in [first(row, ["calle", "direccion", "domicilio"]), first(row, ["altura"])] if x)
         customer["city"] = first(row, ["localidad", "codigolocalidad", "ciudad"])
         customer["route"] = first(row, ["ruta", "recorrido"])

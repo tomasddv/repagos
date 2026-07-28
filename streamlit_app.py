@@ -138,6 +138,8 @@ def build_edf_rows(db, period_mode="Total cargado"):
         repayment = period_map.get(edf.get("id"), get_repayment(edf))
         rows.append({
             "Cliente": customer.get("name") or "",
+            "Nombre fantasia": customer.get("fantasyName") or customer.get("name") or "",
+            "Razon social": customer.get("legalName") or "",
             "Codigo cliente": customer.get("id") or edf.get("customerId") or "",
             "Negocio": edf.get("business") or "OTROS",
             "Supervisor": customer.get("supervisor") or "Sin supervisor",
@@ -166,6 +168,8 @@ def build_customer_rows(db):
         rows.append({
             "Codigo": customer.get("id") or "",
             "Cliente": customer.get("name") or "",
+            "Nombre fantasia": customer.get("fantasyName") or customer.get("name") or "",
+            "Razon social": customer.get("legalName") or "",
             "Direccion": customer.get("address") or "",
             "Localidad": customer.get("city") or "",
             "Ruta": customer.get("route") or "",
