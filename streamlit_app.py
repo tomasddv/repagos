@@ -185,6 +185,54 @@ def build_customer_rows(db):
     return pd.DataFrame(rows)
 
 
+def equipment_reference(avg_hl):
+    if avg_hl >= 1.875:
+        return "Puede colocar Vertical grande"
+    if avg_hl >= 0.9:
+        return "Puede colocar Slim"
+    if avg_hl > 0:
+        return "No colocar todavia"
+    return "Sin venta trimestre"
+
+
+def build_opportunity_rows(db):
+    periods = selected_periods(db, "Trimestre promedio")
+    edf_counts = {}
+    for edf in db.get("edfs", []):
+        if edf.get("status") != "PDV" or not edf.get("customerId"):
+            continue
+        key = (str(edf.get("customerId")), edf.get("business") or "OTROS")
+        edf_counts[key] = edf_counts.get(key, 0) + 1
+
+    rows = []
+    for customer in db.get("customers", []):
+        customer_id = str(customer.get("id") or "")
+        for business in ["CZA", "UNG", "AGUAS", "RB"]:
+            total_hl = business_hl_for_period(customer, business, periods, average=False)
+            avg_hl = business_hl_for_period(customer, business, periods, average=True)
+            if avg_hl <= 0 and edf_counts.get((customer_id, business), 0) == 0:
+                continue
+            reference = equipment_reference(avg_hl)
+            can_place = reference.startswith("Puede")
+            rows.append({
+                "Codigo cliente": customer_id,
+                "Cliente": customer.get("name") or "",
+                "Nombre fantasia": customer.get("fantasyName") or customer.get("name") or "",
+                "Razon social": customer.get("legalName") or "",
+                "Negocio": business,
+                "Supervisor": customer.get("supervisor") or "Sin supervisor",
+                "Promotor": customer.get("promoter") or customer.get("seller") or "Sin promotor",
+                "Ruta": customer.get("route") or "",
+                "HL total trimestre": total_hl,
+                "HL trimestre promedio": avg_hl,
+                "Referencia": reference,
+                "Puede colocar": "Si" if can_place else "No",
+                "EDF actuales negocio": edf_counts.get((customer_id, business), 0),
+                "Meses usados": ", ".join(periods) if periods else "Sin ventas",
+            })
+    return pd.DataFrame(rows)
+
+
 def csv_download(df):
     return df.to_csv(index=False, sep=";").encode("utf-8-sig")
 
@@ -241,6 +289,39 @@ def render_filters(df):
     return filtered
 
 
+def render_opportunity_filters(df):
+    f1, f2, f3, f4, f5, f6 = st.columns(6)
+    business = f1.selectbox("Negocio", ["Todos"] + sorted(df["Negocio"].dropna().unique().tolist()), key="opp_business")
+    supervisor = f2.selectbox("Supervisor", ["Todos"] + sorted(df["Supervisor"].dropna().unique().tolist()), key="opp_supervisor")
+    promoter = f3.selectbox("Promotor", ["Todos"] + sorted(df["Promotor"].dropna().unique().tolist()), key="opp_promoter")
+    placement = f4.selectbox("Colocacion", ["Todos", "Puede colocar", "No colocar", "Sin venta trimestre"], key="opp_placement")
+    customer_code = f5.text_input("Codigo cliente", key="opp_customer_code")
+    query = f6.text_input("Buscar cliente", key="opp_query")
+
+    filtered = df.copy()
+    if business != "Todos":
+        filtered = filtered[filtered["Negocio"] == business]
+    if supervisor != "Todos":
+        filtered = filtered[filtered["Supervisor"] == supervisor]
+    if promoter != "Todos":
+        filtered = filtered[filtered["Promotor"] == promoter]
+    if placement == "Puede colocar":
+        filtered = filtered[filtered["Puede colocar"] == "Si"]
+    elif placement == "No colocar":
+        filtered = filtered[(filtered["Puede colocar"] == "No") & (filtered["Referencia"] != "Sin venta trimestre")]
+    elif placement == "Sin venta trimestre":
+        filtered = filtered[filtered["Referencia"] == "Sin venta trimestre"]
+    if customer_code:
+        q_code = customer_code.strip().lower()
+        normalized = filtered["Codigo cliente"].astype(str).str.replace(r"\.0$", "", regex=True).str.lower()
+        filtered = filtered[normalized.str.startswith(q_code, na=False) | normalized.eq(q_code)]
+    if query:
+        q = query.lower()
+        full_match = filtered.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)
+        filtered = filtered[full_match]
+    return filtered
+
+
 st.title("EDF Repago")
 st.caption("Dashboard operativo by QπU")
 
@@ -271,6 +352,7 @@ if db is None:
 period_mode = st.selectbox("Periodo de repago", ["Total cargado", "Trimestre promedio", "Mes corriente"])
 edf_df = build_edf_rows(db, period_mode)
 customer_df = build_customer_rows(db)
+opportunity_df = build_opportunity_rows(db)
 
 placed = edf_df[edf_df["Estado"] == "En PDV"] if not edf_df.empty else edf_df
 available = edf_df[edf_df["Estado"].isin(["Stock", "Deposito"])] if not edf_df.empty else edf_df
@@ -282,7 +364,7 @@ c2.metric("Disponibles", len(available))
 c3.metric("En PDV", len(placed))
 c4.metric("Bajo 75%", len(under_75))
 
-tab_repago, tab_clientes, tab_rankings = st.tabs(["Repago", "Clientes", "Rankings"])
+tab_repago, tab_clientes, tab_oportunidad, tab_rankings = st.tabs(["Repago", "Clientes", "Oportunidad EDF", "Rankings"])
 
 with tab_repago:
     st.subheader("Listado de repago")
@@ -299,6 +381,24 @@ with tab_clientes:
         filtered_customers = filtered_customers[filtered_customers.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)]
     st.dataframe(filtered_customers, width="stretch", hide_index=True)
     st.download_button("Exportar clientes CSV", csv_download(filtered_customers), "clientes_edf.csv", "text/csv")
+
+with tab_oportunidad:
+    st.subheader("Oportunidad de colocacion por trimestre promedio")
+    st.caption("Referencia: Slim desde 0.9 HL promedio mensual del trimestre; Vertical grande desde 1.875 HL promedio mensual del trimestre.")
+    if not opportunity_df.empty:
+        opp_filtered = render_opportunity_filters(opportunity_df)
+        o1, o2, o3 = st.columns(3)
+        o1.metric("Clientes/negocio", len(opp_filtered))
+        o2.metric("Pueden colocar", int((opp_filtered["Puede colocar"] == "Si").sum()))
+        o3.metric("HL promedio", round(float(opp_filtered["HL trimestre promedio"].sum()), 2) if not opp_filtered.empty else 0)
+        st.dataframe(
+            opp_filtered.sort_values(["Puede colocar", "HL trimestre promedio"], ascending=[False, False]),
+            width="stretch",
+            hide_index=True,
+        )
+        st.download_button("Exportar oportunidad CSV", csv_download(opp_filtered), "oportunidad_edf.csv", "text/csv")
+    else:
+        st.info("No hay ventas trimestrales para evaluar oportunidades.")
 
 with tab_rankings:
     st.subheader("Peores clientes por repago")
