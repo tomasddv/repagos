@@ -9,7 +9,7 @@ from edf_importer import DRIVE_URL, import_data
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
-APP_VERSION = "drive-ignore-bultos-2026-07-31"
+APP_VERSION = "drive-semaforo-visible-2026-07-31"
 
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
@@ -455,6 +455,14 @@ with st.sidebar:
     if meta:
         st.divider()
         st.caption(f"Ultima importacion: {meta.get('importedAt', '-')}")
+        if meta.get("semaforoFile"):
+            st.caption(f"Semaforo leido: {meta.get('semaforoFile')}")
+            st.caption(f"Filas semaforo: {meta.get('semaforoRows', 0)}")
+        semaforo_candidates = meta.get("semaforoCandidates") or []
+        if semaforo_candidates:
+            with st.expander("Semaforos encontrados"):
+                for file_name in semaforo_candidates:
+                    st.caption(f"- {file_name}")
         sales_files = meta.get("salesFiles") or []
         if sales_files:
             st.caption("Ventas leidas:")
@@ -465,6 +473,11 @@ with st.sidebar:
             st.caption("Ventas ignoradas:")
             for file_name in ignored_sales_files:
                 st.caption(f"- {file_name}")
+        ignored_drive_files = meta.get("ignoredDriveFiles") or []
+        if ignored_drive_files:
+            with st.expander("Archivos de Drive ignorados"):
+                for file_name in ignored_drive_files:
+                    st.caption(f"- {file_name}")
 
 period_mode = st.selectbox("Periodo de repago", ["Total cargado", "Trimestre promedio", "Mes corriente"])
 edf_df = build_edf_rows(db, period_mode)

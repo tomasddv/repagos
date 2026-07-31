@@ -14,6 +14,7 @@ DRIVE_URL = "https://drive.google.com/drive/folders/1cukgXLUaPsEDK_yD7tSwgaBFZAb
 ROOT = Path(__file__).parent
 SOURCE_DIR = ROOT / "data" / "drive-source"
 DB_PATH = ROOT / "data" / "db.json"
+SYNC_MANIFEST_PATH = SOURCE_DIR / "_sync_manifest.json"
 
 REPAYMENT_TARGETS = {
     "Vertical grande": 2.5,
@@ -128,6 +129,21 @@ def find_file(patterns):
     return None
 
 
+def find_files(patterns):
+    files = [p for p in SOURCE_DIR.iterdir() if p.is_file()]
+    matches = []
+    for pattern in patterns:
+        matches.extend([p for p in files if re.search(pattern, p.name, re.I)])
+    return sorted(set(matches), key=lambda p: p.name.lower())
+
+
+def read_excel_preferred(path, preferred_sheet=None):
+    try:
+        return read_excel_any(path, preferred_sheet)
+    except Exception:
+        return read_excel_any(path)
+
+
 def is_sales_file(path):
     name = path.name.lower()
     return path.is_file() and re.match(r"venta.*\.txt$", name, re.I) and "bultos" not in name
@@ -136,6 +152,17 @@ def is_sales_file(path):
 def ignored_sales_file(path):
     name = path.name.lower()
     return path.is_file() and re.match(r"venta.*\.txt$", name, re.I) and "bultos" in name
+
+
+def wanted_drive_file_name(name):
+    normalized = name.lower()
+    if "bultos" in normalized:
+        return False
+    return bool(
+        re.search(r"sem.*activos.*\.xlsx$", normalized, re.I)
+        or re.search(r"plantilla.*clientes.*\.xlsx$", normalized, re.I)
+        or re.search(r"venta.*\.txt$", normalized, re.I)
+    )
 
 
 def guess_model(row):
@@ -264,10 +291,44 @@ def sync_drive(folder_url=DRIVE_URL):
     if SOURCE_DIR.exists():
         shutil.rmtree(SOURCE_DIR)
     SOURCE_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        return gdown.download_folder(url=folder_url, output=str(SOURCE_DIR), quiet=False, use_cookies=False) or []
-    except TypeError:
-        return gdown.download_folder(url=folder_url, output=str(SOURCE_DIR), quiet=False) or []
+    files_to_download = gdown.download_folder(
+        url=folder_url,
+        output=str(SOURCE_DIR),
+        quiet=True,
+        use_cookies=False,
+        skip_download=True,
+    ) or []
+    skipped = []
+    wanted = []
+    for drive_file in files_to_download:
+        file_name = Path(drive_file.path).name
+        if wanted_drive_file_name(file_name):
+            wanted.append(file_name)
+        else:
+            skipped.append(file_name)
+    SYNC_MANIFEST_PATH.write_text(json.dumps({
+        "wantedDriveFiles": wanted,
+        "ignoredDriveFiles": skipped,
+    }, ensure_ascii=False), encoding="utf-8")
+    downloaded = []
+    for drive_file in files_to_download:
+        file_name = Path(drive_file.path).name
+        if not wanted_drive_file_name(file_name):
+            continue
+        target_path = SOURCE_DIR / file_name
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path = gdown.download(
+            url="https://drive.google.com/uc?id=" + drive_file.id,
+            output=str(target_path),
+            quiet=False,
+            use_cookies=False,
+        )
+        if local_path:
+            downloaded.append(local_path)
+    manifest = json.loads(SYNC_MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest["downloadedFiles"] = [Path(path).name for path in downloaded]
+    SYNC_MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    return downloaded
 
 
 def import_data(sync=False, folder_url=DRIVE_URL):
@@ -275,7 +336,11 @@ def import_data(sync=False, folder_url=DRIVE_URL):
         sync_drive(folder_url)
 
     SOURCE_DIR.mkdir(parents=True, exist_ok=True)
-    semaforo_file = find_file([r"sem.*activos.*\.xlsx$"])
+    sync_manifest = {}
+    if SYNC_MANIFEST_PATH.exists():
+        sync_manifest = json.loads(SYNC_MANIFEST_PATH.read_text(encoding="utf-8"))
+    semaforo_candidates = find_files([r"sem.*activos.*\.xlsx$", r"semaforo.*\.xlsx$", r"semáforo.*\.xlsx$"])
+    semaforo_file = sorted(semaforo_candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0] if semaforo_candidates else None
     clientes_file = find_file([r"plantilla.*clientes.*\.xlsx$"])
     pi_file = find_file([r"pi 2026.*\.xlsb$"])
     edf1_file = find_file([r"edf 1.*\.xlsx$"])
@@ -290,8 +355,8 @@ def import_data(sync=False, folder_url=DRIVE_URL):
     if missing:
         raise FileNotFoundError(f"Faltan archivos en Drive: {', '.join(missing)}")
 
-    semaforo = read_excel_any(semaforo_file, "Page1")
-    clientes = read_excel_any(clientes_file, "Clientes")
+    semaforo = read_excel_preferred(semaforo_file, "Page1")
+    clientes = read_excel_preferred(clientes_file, "Clientes")
     pi_sheets = []
     if pi_file:
         for sheet, pi_type in [("CZA", "CZA"), ("UNG", "UNG"), ("RB", "RB")]:
@@ -434,8 +499,15 @@ def import_data(sync=False, folder_url=DRIVE_URL):
             "importedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "sourceDir": str(SOURCE_DIR),
             "files": [p.name for p in SOURCE_DIR.iterdir() if p.is_file()],
+            "semaforoFile": semaforo_file.name if semaforo_file else "",
+            "semaforoCandidates": [p.name for p in semaforo_candidates],
+            "semaforoRows": len(semaforo),
+            "semaforoColumns": list(semaforo.columns),
             "salesFiles": [p.name for p in sales_files],
             "ignoredSalesFiles": [p.name for p in ignored_sales_files],
+            "wantedDriveFiles": sync_manifest.get("wantedDriveFiles", []),
+            "ignoredDriveFiles": sync_manifest.get("ignoredDriveFiles", []),
+            "downloadedFiles": sync_manifest.get("downloadedFiles", []),
         },
         "customers": sorted(customers.values(), key=lambda c: int(c["id"]) if str(c["id"]).isdigit() else 999999999),
         "edfs": edfs,
@@ -444,8 +516,14 @@ def import_data(sync=False, folder_url=DRIVE_URL):
             "changes": {
                 "sourceDir": str(SOURCE_DIR),
                 "files": [p.name for p in SOURCE_DIR.iterdir() if p.is_file()],
+                "semaforoFile": semaforo_file.name if semaforo_file else "",
+                "semaforoCandidates": [p.name for p in semaforo_candidates],
+                "semaforoRows": len(semaforo),
                 "salesFiles": [p.name for p in sales_files],
                 "ignoredSalesFiles": [p.name for p in ignored_sales_files],
+                "wantedDriveFiles": sync_manifest.get("wantedDriveFiles", []),
+                "ignoredDriveFiles": sync_manifest.get("ignoredDriveFiles", []),
+                "downloadedFiles": sync_manifest.get("downloadedFiles", []),
                 "customers": len(customers),
                 "edfs": len(edfs),
             },
