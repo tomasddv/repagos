@@ -9,7 +9,7 @@ from edf_importer import DRIVE_URL, import_data
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
-APP_VERSION = "drive-fresh-sync-2026-07-31"
+APP_VERSION = "drive-ignore-bultos-2026-07-31"
 
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
@@ -459,6 +459,11 @@ with st.sidebar:
         if sales_files:
             st.caption("Ventas leidas:")
             for file_name in sales_files:
+                st.caption(f"- {file_name}")
+        ignored_sales_files = meta.get("ignoredSalesFiles") or []
+        if ignored_sales_files:
+            st.caption("Ventas ignoradas:")
+            for file_name in ignored_sales_files:
                 st.caption(f"- {file_name}")
 
 period_mode = st.selectbox("Periodo de repago", ["Total cargado", "Trimestre promedio", "Mes corriente"])

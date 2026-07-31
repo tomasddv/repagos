@@ -128,6 +128,16 @@ def find_file(patterns):
     return None
 
 
+def is_sales_file(path):
+    name = path.name.lower()
+    return path.is_file() and re.match(r"venta.*\.txt$", name, re.I) and "bultos" not in name
+
+
+def ignored_sales_file(path):
+    name = path.name.lower()
+    return path.is_file() and re.match(r"venta.*\.txt$", name, re.I) and "bultos" in name
+
+
 def guess_model(row):
     raw = f"{first(row, ['modelo','codmodelo','descripcionarticulo','descproducto','producto'])} {first(row, ['unidaddenegocio','un'])}".upper()
     if re.search(r"\bBV\b|BABY", raw):
@@ -270,7 +280,8 @@ def import_data(sync=False, folder_url=DRIVE_URL):
     pi_file = find_file([r"pi 2026.*\.xlsb$"])
     edf1_file = find_file([r"edf 1.*\.xlsx$"])
     edf2_file = find_file([r"edf 2.*\.xlsx$"])
-    sales_files = sorted([p for p in SOURCE_DIR.iterdir() if p.is_file() and re.match(r"venta.*\.txt$", p.name, re.I)], key=lambda p: p.stat().st_mtime)
+    sales_files = sorted([p for p in SOURCE_DIR.iterdir() if is_sales_file(p)], key=lambda p: p.stat().st_mtime)
+    ignored_sales_files = sorted([p for p in SOURCE_DIR.iterdir() if ignored_sales_file(p)], key=lambda p: p.name.lower())
 
     missing = [name for name, file in {
         "semaforo": semaforo_file,
@@ -424,6 +435,7 @@ def import_data(sync=False, folder_url=DRIVE_URL):
             "sourceDir": str(SOURCE_DIR),
             "files": [p.name for p in SOURCE_DIR.iterdir() if p.is_file()],
             "salesFiles": [p.name for p in sales_files],
+            "ignoredSalesFiles": [p.name for p in ignored_sales_files],
         },
         "customers": sorted(customers.values(), key=lambda c: int(c["id"]) if str(c["id"]).isdigit() else 999999999),
         "edfs": edfs,
@@ -433,6 +445,7 @@ def import_data(sync=False, folder_url=DRIVE_URL):
                 "sourceDir": str(SOURCE_DIR),
                 "files": [p.name for p in SOURCE_DIR.iterdir() if p.is_file()],
                 "salesFiles": [p.name for p in sales_files],
+                "ignoredSalesFiles": [p.name for p in ignored_sales_files],
                 "customers": len(customers),
                 "edfs": len(edfs),
             },
