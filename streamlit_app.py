@@ -13,6 +13,48 @@ DATA_PATH = ROOT / "data" / "db.json"
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
 
+st.markdown(
+    """
+    <style>
+      .block-container { padding-top: 1.4rem; padding-bottom: 2rem; }
+      div[data-testid="stMetric"] {
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.08);
+        border-radius: 10px;
+        padding: .8rem .9rem;
+      }
+      .edf-card {
+        border: 1px solid rgba(255,255,255,.12);
+        border-radius: 10px;
+        padding: .85rem .9rem;
+        margin: .55rem 0;
+        background: rgba(255,255,255,.035);
+      }
+      .edf-card-title { font-weight: 800; font-size: 1rem; margin-bottom: .2rem; }
+      .edf-card-sub { color: rgba(250,250,250,.72); font-size: .86rem; margin-bottom: .45rem; }
+      .edf-badges { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }
+      .edf-badge {
+        border-radius: 999px;
+        padding: .16rem .48rem;
+        font-size: .78rem;
+        font-weight: 700;
+        background: rgba(15,143,109,.18);
+        border: 1px solid rgba(15,143,109,.28);
+      }
+      @media (max-width: 700px) {
+        .block-container { padding-left: .75rem; padding-right: .75rem; }
+        h1 { font-size: 1.85rem !important; }
+        h2, h3 { font-size: 1.22rem !important; }
+        div[data-testid="stMetric"] { padding: .65rem .7rem; }
+        div[data-testid="stMetricValue"] { font-size: 1.55rem; }
+        .stTabs [data-baseweb="tab-list"] { gap: .25rem; overflow-x: auto; }
+        .stTabs [data-baseweb="tab"] { padding-left: .45rem; padding-right: .45rem; }
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def load_db_from_disk():
     if not DATA_PATH.exists():
@@ -237,6 +279,53 @@ def csv_download(df):
     return df.to_csv(index=False, sep=";").encode("utf-8-sig")
 
 
+def compact_text(value, fallback="-"):
+    text = "" if pd.isna(value) else str(value)
+    return text if text.strip() else fallback
+
+
+def render_card_list(df, kind, limit=80):
+    if df.empty:
+        st.info("No hay resultados para mostrar.")
+        return
+    st.caption(f"Mostrando {min(len(df), limit)} de {len(df)} registros en vista celular.")
+    for _, row in df.head(limit).iterrows():
+        if kind == "repago":
+            title = f"{compact_text(row.get('Codigo cliente'))} · {compact_text(row.get('Nombre fantasia') or row.get('Cliente'))}"
+            sub = f"{compact_text(row.get('Negocio'))} · {compact_text(row.get('Modelo'))} · Serie {compact_text(row.get('Serie'))}"
+            badges = [
+                compact_text(row.get("Estado")),
+                compact_text(row.get("Supervisor")),
+                f"{compact_text(row.get('HL'))} HL",
+                f"{compact_text(row.get('% Repago'))}%",
+                compact_text(row.get("Banda")),
+            ]
+        elif kind == "opportunity":
+            title = f"{compact_text(row.get('Codigo cliente'))} · {compact_text(row.get('Nombre fantasia') or row.get('Cliente'))}"
+            sub = f"{compact_text(row.get('Negocio'))} · {compact_text(row.get('Supervisor'))} · {compact_text(row.get('Promotor'))}"
+            badges = [
+                f"{compact_text(row.get('HL trimestre promedio'))} HL prom.",
+                f"{compact_text(row.get('HL total trimestre'))} HL trim.",
+                compact_text(row.get("Referencia")),
+                f"EDF {compact_text(row.get('EDF actuales negocio'))}",
+            ]
+        else:
+            title = f"{compact_text(row.get('Codigo') or row.get('Codigo cliente'))} · {compact_text(row.get('Nombre fantasia') or row.get('Cliente'))}"
+            sub = f"{compact_text(row.get('Supervisor'))} · {compact_text(row.get('Promotor'))}"
+            badges = [compact_text(row.get("Ruta")), compact_text(row.get("PI"))]
+        badge_html = "".join(f"<span class='edf-badge'>{badge}</span>" for badge in badges if badge and badge != "-")
+        st.markdown(
+            f"""
+            <div class="edf-card">
+              <div class="edf-card-title">{title}</div>
+              <div class="edf-card-sub">{sub}</div>
+              <div class="edf-badges">{badge_html}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 def render_filters(df):
     f1, f2, f3, f4, f5, f6 = st.columns(6)
     business = f1.selectbox("Negocio", ["Todos"] + sorted(df["Negocio"].dropna().unique().tolist()))
@@ -369,7 +458,14 @@ tab_repago, tab_clientes, tab_oportunidad, tab_rankings = st.tabs(["Repago", "Cl
 with tab_repago:
     st.subheader("Listado de repago")
     filtered = render_filters(edf_df)
-    st.dataframe(filtered, width="stretch", hide_index=True)
+    repago_view = st.radio("Vista", ["Tarjetas celular", "Tabla completa"], horizontal=True, key="repago_view")
+    if repago_view == "Tarjetas celular":
+        render_card_list(
+            filtered.sort_values(["% Repago", "Codigo cliente"], ascending=[True, True]),
+            "repago",
+        )
+    else:
+        st.dataframe(filtered, width="stretch", hide_index=True)
     st.download_button("Exportar listado CSV", csv_download(filtered), "repago_edf.csv", "text/csv")
 
 with tab_clientes:
@@ -379,7 +475,11 @@ with tab_clientes:
     if query:
         q = query.lower()
         filtered_customers = filtered_customers[filtered_customers.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)]
-    st.dataframe(filtered_customers, width="stretch", hide_index=True)
+    clientes_view = st.radio("Vista", ["Tarjetas celular", "Tabla completa"], horizontal=True, key="clientes_view")
+    if clientes_view == "Tarjetas celular":
+        render_card_list(filtered_customers, "clientes")
+    else:
+        st.dataframe(filtered_customers, width="stretch", hide_index=True)
     st.download_button("Exportar clientes CSV", csv_download(filtered_customers), "clientes_edf.csv", "text/csv")
 
 with tab_oportunidad:
@@ -391,11 +491,12 @@ with tab_oportunidad:
         o1.metric("Clientes/negocio", len(opp_filtered))
         o2.metric("Pueden colocar", int((opp_filtered["Puede colocar"] == "Si").sum()))
         o3.metric("HL promedio", round(float(opp_filtered["HL trimestre promedio"].sum()), 2) if not opp_filtered.empty else 0)
-        st.dataframe(
-            opp_filtered.sort_values(["Puede colocar", "HL trimestre promedio"], ascending=[False, False]),
-            width="stretch",
-            hide_index=True,
-        )
+        opp_sorted = opp_filtered.sort_values(["Puede colocar", "HL trimestre promedio"], ascending=[False, False])
+        opp_view = st.radio("Vista", ["Tarjetas celular", "Tabla completa"], horizontal=True, key="opp_view")
+        if opp_view == "Tarjetas celular":
+            render_card_list(opp_sorted, "opportunity")
+        else:
+            st.dataframe(opp_sorted, width="stretch", hide_index=True)
         st.download_button("Exportar oportunidad CSV", csv_download(opp_filtered), "oportunidad_edf.csv", "text/csv")
     else:
         st.info("No hay ventas trimestrales para evaluar oportunidades.")
