@@ -2,7 +2,9 @@ import json
 import math
 import os
 import re
+import shutil
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -249,6 +251,8 @@ def add_sale(customer, business, period, hl):
 
 def sync_drive(folder_url=DRIVE_URL):
     import gdown
+    if SOURCE_DIR.exists():
+        shutil.rmtree(SOURCE_DIR)
     SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     try:
         return gdown.download_folder(url=folder_url, output=str(SOURCE_DIR), quiet=False, use_cookies=False) or []
@@ -415,6 +419,12 @@ def import_data(sync=False, folder_url=DRIVE_URL):
         edf["customer"] = customer if customer else None
 
     db = {
+        "meta": {
+            "importedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "sourceDir": str(SOURCE_DIR),
+            "files": [p.name for p in SOURCE_DIR.iterdir() if p.is_file()],
+            "salesFiles": [p.name for p in sales_files],
+        },
         "customers": sorted(customers.values(), key=lambda c: int(c["id"]) if str(c["id"]).isdigit() else 999999999),
         "edfs": edfs,
         "audit": [{

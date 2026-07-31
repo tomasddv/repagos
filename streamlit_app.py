@@ -9,7 +9,7 @@ from edf_importer import DRIVE_URL, import_data
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
-APP_VERSION = "drive-repago-periodo-2026-07-31"
+APP_VERSION = "drive-fresh-sync-2026-07-31"
 
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
@@ -449,6 +449,17 @@ except Exception as exc:
     st.write("Revisa que la carpeta de Drive este compartida como publica o accesible por enlace y que tenga los archivos fuente.")
     st.exception(exc)
     st.stop()
+
+with st.sidebar:
+    meta = db.get("meta") or {}
+    if meta:
+        st.divider()
+        st.caption(f"Ultima importacion: {meta.get('importedAt', '-')}")
+        sales_files = meta.get("salesFiles") or []
+        if sales_files:
+            st.caption("Ventas leidas:")
+            for file_name in sales_files:
+                st.caption(f"- {file_name}")
 
 period_mode = st.selectbox("Periodo de repago", ["Total cargado", "Trimestre promedio", "Mes corriente"])
 edf_df = build_edf_rows(db, period_mode)
