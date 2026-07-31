@@ -9,6 +9,7 @@ from edf_importer import DRIVE_URL, import_data
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
+APP_VERSION = "drive-repago-periodo-2026-07-31"
 
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
@@ -66,6 +67,11 @@ def load_db_from_upload(uploaded_file):
     if uploaded_file is None:
         return None
     return json.loads(uploaded_file.getvalue().decode("utf-8"))
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_db_from_drive(folder_url):
+    return import_data(sync=True, folder_url=folder_url)
 
 
 def band_label(pct, hl):
@@ -178,6 +184,16 @@ def build_edf_rows(db, period_mode="Total cargado"):
     for edf in db.get("edfs", []):
         customer = edf.get("customer") or {}
         repayment = period_map.get(edf.get("id"), get_repayment(edf))
+        if use_period and edf.get("status") == "PDV":
+            period_hl = business_hl_for_period(
+                customer,
+                edf.get("business") or "OTROS",
+                periods,
+                average=period_mode == "Trimestre promedio",
+            )
+            if repayment["hl"] > period_hl:
+                target = repayment["target"] or get_repayment(edf)["target"] or 1.6
+                repayment = repayment_for_values(min(period_hl, target), target)
         rows.append({
             "Cliente": customer.get("name") or "",
             "Nombre fantasia": customer.get("fantasyName") or customer.get("name") or "",
@@ -416,26 +432,22 @@ st.caption("Dashboard operativo by QπU")
 
 with st.sidebar:
     st.header("Datos")
-    uploaded = st.file_uploader("Subir db.json", type=["json"])
-    st.caption("Tambien puede existir como data/db.json dentro del repo.")
-    st.divider()
+    st.caption(f"Version: {APP_VERSION}")
+    st.caption("Fuente principal: Google Drive")
     st.header("Google Drive")
     drive_url = st.text_input("Carpeta Drive", value=DRIVE_URL)
-    if st.button("Sincronizar Drive e importar"):
-        try:
-            with st.spinner("Leyendo Drive y generando base..."):
-                db = import_data(sync=True, folder_url=drive_url)
-            st.success("Base actualizada desde Drive.")
-            st.rerun()
-        except Exception as exc:
-            st.error("No se pudo importar desde Drive.")
-            st.exception(exc)
+    sync_now = st.button("Sincronizar Drive e importar")
 
-db = load_db_from_upload(uploaded) or load_db_from_disk()
+if sync_now:
+    load_db_from_drive.clear()
 
-if db is None:
-    st.warning("Falta cargar la base del dashboard.")
-    st.write("Subi el archivo `db.json` desde la barra lateral, o agregalo al repo en `data/db.json`.")
+try:
+    with st.spinner("Leyendo Drive y generando base..."):
+        db = load_db_from_drive(drive_url)
+except Exception as exc:
+    st.error("No se pudo importar desde Drive.")
+    st.write("Revisa que la carpeta de Drive este compartida como publica o accesible por enlace y que tenga los archivos fuente.")
+    st.exception(exc)
     st.stop()
 
 period_mode = st.selectbox("Periodo de repago", ["Total cargado", "Trimestre promedio", "Mes corriente"])
