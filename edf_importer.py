@@ -166,29 +166,44 @@ def wanted_drive_file_name(name):
 
 
 def guess_model(row):
-    raw = f"{first(row, ['modelo','codmodelo','descripcionarticulo','descproducto','producto'])} {first(row, ['unidaddenegocio','un'])}".upper()
+    raw = " ".join(
+        first(row, [name])
+        for name in [
+            "codmodelo",
+            "modelo",
+            "descripcionarticulo",
+            "descproducto",
+            "producto",
+            "unidaddenegocio",
+            "un",
+        ]
+        if first(row, [name])
+    ).upper()
+    model_code = name_key(first(row, ["codmodelo", "modelo"]))
     if re.search(r"\bBV\b|BABY", raw):
         return "Baby visu"
     if re.search(r"RED BULL|\bRB\b", raw):
         return "Red Bull"
-    if re.search(r"VERT.*GRAN|\bVG\b", raw):
+    if model_code in {"VG", "VGC", "VGT", "COMP"} or re.search(r"VERT.*(GRAN|GDE)|\bVG\b|VG CASSETTE|VERTICAL GRANDE", raw):
         return "Vertical grande"
-    if re.search(r"VERT.*MED|\bVM\b", raw):
+    if model_code == "VM" or re.search(r"VERT.*MED|\bVM\b", raw):
         return "Vertical mediana"
-    if re.search(r"DOBLE|2P|\bDP\b", raw):
+    if model_code in {"DP", "DPP", "MP"} or re.search(r"DOBLE|2P|\bDP\b|MULTIPUERTA", raw):
         return "Doble puerta"
     if re.search(r"FULL|GLASS", raw):
         return "Full glass"
-    if "HORIZ" in raw:
+    if model_code == "BB" or "HORIZ" in raw:
         return "Horizontal"
-    if "SAHARA" in raw:
+    if model_code == "S" or "SAHARA" in raw:
         return "Sahara"
     if "SLIM" in raw:
         return "Slim"
-    if "MOST" in raw:
-        return "Mostrador"
-    if re.search(r"3.*BAN", raw):
+    if model_code == "C" or "CHECK" in raw:
+        return "Check out"
+    if model_code == "3BAND" or re.search(r"3.*BAN", raw):
         return "3 bandejas"
+    if model_code == "M" or "MOST" in raw:
+        return "Mostrador"
     return "Mostrador"
 
 

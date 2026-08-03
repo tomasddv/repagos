@@ -9,7 +9,7 @@ from edf_importer import DRIVE_URL, import_data
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
-APP_VERSION = "drive-semaforo-visible-2026-07-31"
+APP_VERSION = "modelos-semaforo-vgc-2026-08-03"
 
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
