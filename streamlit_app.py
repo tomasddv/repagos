@@ -9,7 +9,7 @@ from edf_importer import DRIVE_URL, import_data
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
-APP_VERSION = "modelos-semaforo-vgc-2026-08-03"
+APP_VERSION = "periodo-sin-total-2026-08-03"
 
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
@@ -176,7 +176,7 @@ def status_label(status):
     return labels.get(status or "", status or "-")
 
 
-def build_edf_rows(db, period_mode="Total cargado"):
+def build_edf_rows(db, period_mode="Trimestre promedio"):
     periods = selected_periods(db, period_mode)
     use_period = period_mode != "Total cargado"
     period_map = period_repayment_map(db, periods, average=period_mode == "Trimestre promedio") if use_period else {}
@@ -479,7 +479,7 @@ with st.sidebar:
                 for file_name in ignored_drive_files:
                     st.caption(f"- {file_name}")
 
-period_mode = st.selectbox("Periodo de repago", ["Total cargado", "Trimestre promedio", "Mes corriente"])
+period_mode = st.selectbox("Periodo de repago", ["Trimestre promedio", "Mes corriente"])
 edf_df = build_edf_rows(db, period_mode)
 customer_df = build_customer_rows(db)
 opportunity_df = build_opportunity_rows(db)
