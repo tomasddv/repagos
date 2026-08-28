@@ -17,6 +17,7 @@ FORMS_SHEET_ID = "1riJFa2mEvFxY7c4YF4zsZ--9mclIsuOqXqHLD-o6slw"
 FORMS_GID = "842725206"
 
 DEFAULT_TEMPLATES = {
+    "SOLICITUDES": "Buenas,\n\nSolicito gestionar las siguientes solicitudes de EDF:\n\n{{edf_table}}\n\nGracias.",
     "COMODATO": "Buenas,\n\nSolicito gestionar el comodato de los siguientes EDF:\n\n{{edf_table}}\n\nGracias.",
     "CONTRA COMODATO": "Buenas,\n\nSolicito gestionar el contra comodato de los siguientes EDF:\n\n{{edf_table}}\n\nGracias.",
 }
@@ -118,16 +119,15 @@ def customer_name(customer):
 
 
 def build_mail_table(rows):
-    lines = ["Detalle de EDF:"]
-    for index, row in enumerate(rows, start=1):
-        lines.extend([
-            "",
-            f"{index}. SKU EDF: {row['SKU EDF']}",
-            f"   Modelo: {row['Modelo']}",
-            f"   Nro de serie: {row['Nro de serie']}",
-            f"   Codigo cliente: {row['Codigo cliente']}",
-            f"   Razon social: {row['Razon social']}",
-        ])
+    lines = [
+        "| Solicitud | SKU EDF | Modelo | Nro de serie | Codigo cliente | Razon social |",
+        "|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['Solicitud']} | {row['SKU EDF']} | {row['Modelo']} | "
+            f"{row['Nro de serie']} | {row['Codigo cliente']} | {row['Razon social']} |"
+        )
     return "\n".join(lines)
 
 
@@ -744,6 +744,7 @@ with tab_mails:
                 for label in selected_form_labels:
                     row = form_labels[label]
                     item = {
+                        "Tipo": row["Tipo"],
                         "Activo": row["SKU EDF"],
                         "Serie": row["Nro de serie"],
                         "Modelo": row["Modelo"],
@@ -765,7 +766,6 @@ with tab_mails:
 
     settings_col, preview_col = st.columns([1, 1])
     with settings_col:
-        request_type = st.selectbox("Tipo de solicitud", ["COMODATO", "CONTRA COMODATO"], key="mail_type")
         supervisor_options = [row["supervisor"] for row in mail_settings["supervisorRecipients"]]
         selected_supervisor = st.selectbox("Supervisor", supervisor_options, key="mail_supervisor")
         recipients_by_supervisor = {
@@ -808,7 +808,8 @@ with tab_mails:
                     for item in st.session_state["mail_edf_items"]
                 }
                 if item_key not in existing_keys:
-                    st.session_state["mail_edf_items"].append(source)
+                    manual_type = "CONTRA COMODATO" if source.get("Codigo cliente") else "COMODATO"
+                    st.session_state["mail_edf_items"].append({**source, "Tipo": manual_type})
                 st.rerun()
         with clear_col:
             if st.button("Vaciar mail", disabled=not st.session_state["mail_edf_items"]):
@@ -817,9 +818,9 @@ with tab_mails:
 
         template = st.text_area(
             "Cuerpo base",
-            value=mail_settings["templates"].get(request_type, DEFAULT_TEMPLATES[request_type]),
+            value=mail_settings["templates"].get("SOLICITUDES", DEFAULT_TEMPLATES["SOLICITUDES"]),
             height=220,
-            key=f"mail_current_template_{request_type}",
+            key="mail_current_template_solicitudes",
         )
 
     selected_rows = []
@@ -839,7 +840,8 @@ with tab_mails:
                     st.rerun()
             customer_code = str(source.get("Codigo cliente") or "")
             social_reason = str(source.get("Razon social") or source.get("Nombre fantasia") or source.get("Cliente") or "")
-            if request_type == "COMODATO":
+            source_type = source.get("Tipo") or ("CONTRA COMODATO" if customer_code else "COMODATO")
+            if source_type == "COMODATO":
                 customer_input_key = f"mail_customer_{edf_key}"
                 if customer_input_key not in st.session_state:
                     st.session_state[customer_input_key] = customer_code
@@ -850,6 +852,7 @@ with tab_mails:
                 customer = customer_lookup.get(customer_code)
                 social_reason = customer_name(customer)
             selected_rows.append({
+                "Solicitud": source_type,
                 "SKU EDF": source.get("Activo") or "Sin SKU",
                 "Modelo": source.get("Modelo semaforo") or source.get("Modelo") or "",
                 "Nro de serie": source.get("Serie") or "",
@@ -865,7 +868,9 @@ with tab_mails:
 
     table_text = build_mail_table(selected_rows)
     body = build_mail_body(template, table_text)
-    subject = f"[EDF] Solicitud {request_type} - {len(selected_rows)} equipo(s) - {selected_supervisor}"
+    type_counts = pd.Series([row["Solicitud"] for row in selected_rows]).value_counts().to_dict() if selected_rows else {}
+    type_summary = " / ".join(f"{total} {name.lower()}" for name, total in type_counts.items()) or "0 solicitudes"
+    subject = f"[EDF] Solicitudes comodato/contra - {type_summary} - {selected_supervisor}"
 
     action_col1, action_col2 = st.columns([1, 1])
     with action_col1:
@@ -881,14 +886,16 @@ with tab_mails:
     edited_recipients = st.data_editor(recipients_df, width="stretch", hide_index=True, num_rows="dynamic", key="mail_recipients_editor")
 
     st.markdown("**Plantillas guardadas**")
+    template_solicitudes = st.text_area("Plantilla solicitudes", value=mail_settings["templates"].get("SOLICITUDES", DEFAULT_TEMPLATES["SOLICITUDES"]), height=160, key="mail_template_solicitudes")
     template_comodato = st.text_area("Plantilla comodato", value=mail_settings["templates"].get("COMODATO", DEFAULT_TEMPLATES["COMODATO"]), height=160, key="mail_template_comodato")
     template_contra = st.text_area("Plantilla contra comodato", value=mail_settings["templates"].get("CONTRA COMODATO", DEFAULT_TEMPLATES["CONTRA COMODATO"]), height=160, key="mail_template_contra")
     if st.button("Guardar configuracion de mails"):
         saved_templates = {
+            "SOLICITUDES": template_solicitudes,
             "COMODATO": template_comodato,
             "CONTRA COMODATO": template_contra,
         }
-        saved_templates[request_type] = template
+        saved_templates["SOLICITUDES"] = template
         saved_settings = {
             "supervisorRecipients": edited_recipients.fillna("").to_dict("records"),
             "templates": saved_templates,
