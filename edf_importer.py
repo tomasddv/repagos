@@ -507,7 +507,10 @@ def import_data(sync=False, folder_url=DRIVE_URL):
         asset = asset or asset_by_serial.get(serial, "")
         if not serial and not asset:
             continue
-        adjacent_model = guess_model_from_value(next_column_value(row, asset_column)) if asset_column in {"skuedf", "sku", "codproducto", "codigoproducto"} else ""
+        semaforo_model_description = next_column_value(row, asset_column) if asset_column in {"skuedf", "sku", "codproducto", "codigoproducto"} else ""
+        if not semaforo_model_description:
+            semaforo_model_description = first(row, ["descproducto", "descripcionarticulo", "producto", "modelo"])
+        adjacent_model = guess_model_from_value(semaforo_model_description) if asset_column in {"skuedf", "sku", "codproducto", "codigoproducto"} else ""
         explicit_model = guess_model_from_value(first(row, ["modelo", "codmodelo", "descproducto", "descripcionarticulo", "producto"]))
         customer_id = code(first(row, ["codcliente", "cliente", "codigocliente", "nrocliente"]))
         if customer_id == "0":
@@ -520,6 +523,7 @@ def import_data(sync=False, folder_url=DRIVE_URL):
             "asset": asset,
             "serial": serial,
             "model": adjacent_model or explicit_model or guess_model(row),
+            "modelDescription": semaforo_model_description,
             "business": business_from_edf(row),
             "status": normalize_status(first(row, ["ubicacion", "origen", "descdeposito", "relaciondeposucursal"]), customer_id),
             "deposit": deposit_from(row),

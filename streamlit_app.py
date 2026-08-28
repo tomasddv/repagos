@@ -115,12 +115,16 @@ def customer_name(customer):
 
 
 def build_mail_table(rows):
-    lines = ["SKU EDF | Modelo | Nro de serie | Codigo cliente | Razon social"]
-    for row in rows:
-        lines.append(
-            f"{row['SKU EDF']} | {row['Modelo']} | {row['Nro de serie']} | "
-            f"{row['Codigo cliente']} | {row['Razon social']}"
-        )
+    lines = ["Detalle de EDF:"]
+    for index, row in enumerate(rows, start=1):
+        lines.extend([
+            "",
+            f"{index}. SKU EDF: {row['SKU EDF']}",
+            f"   Modelo: {row['Modelo']}",
+            f"   Nro de serie: {row['Nro de serie']}",
+            f"   Codigo cliente: {row['Codigo cliente']}",
+            f"   Razon social: {row['Razon social']}",
+        ])
     return "\n".join(lines)
 
 
@@ -271,6 +275,7 @@ def build_edf_rows(db, period_mode="Trimestre promedio"):
             "Activo": edf.get("asset") or "",
             "Serie": edf.get("serial") or "",
             "Modelo": edf.get("model") or "",
+            "Modelo semaforo": edf.get("modelDescription") or edf.get("model") or "",
             "Estado": status_label(edf.get("status")),
             "Deposito": edf.get("deposit") or "",
             "HL": repayment["hl"],
@@ -658,7 +663,7 @@ with tab_mails:
         for index, row in enumerate(mail_df.to_dict("records")):
             label = (
                 f"{row.get('Activo') or 'Sin SKU'} | {row.get('Serie') or 'Sin serie'} | "
-                f"{row.get('Modelo')} | {row.get('Codigo cliente') or 'sin cliente'}"
+                f"{row.get('Modelo semaforo') or row.get('Modelo')} | {row.get('Codigo cliente') or 'sin cliente'}"
             )
             option_labels[f"{label} #{index + 1}"] = row
         selected_labels = st.multiselect("EDF para incluir", list(option_labels.keys()), key="mail_selected_edfs")
@@ -688,7 +693,7 @@ with tab_mails:
                 social_reason = customer_name(customer)
             selected_rows.append({
                 "SKU EDF": source.get("Activo") or "Sin SKU",
-                "Modelo": source.get("Modelo") or "",
+                "Modelo": source.get("Modelo semaforo") or source.get("Modelo") or "",
                 "Nro de serie": source.get("Serie") or "",
                 "Codigo cliente": customer_code,
                 "Razon social": social_reason,
