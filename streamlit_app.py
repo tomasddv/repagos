@@ -119,15 +119,17 @@ def customer_name(customer):
 
 
 def build_mail_table(rows):
-    lines = [
-        "| Solicitud | SKU EDF | Modelo | Nro de serie | Codigo cliente | Razon social |",
-        "|---|---|---|---|---|---|",
-    ]
-    for row in rows:
-        lines.append(
-            f"| {row['Solicitud']} | {row['SKU EDF']} | {row['Modelo']} | "
-            f"{row['Nro de serie']} | {row['Codigo cliente']} | {row['Razon social']} |"
-        )
+    lines = []
+    for index, row in enumerate(rows, start=1):
+        lines.extend([
+            f"{index}. {row['Solicitud']}",
+            f"   Cliente: {row['Codigo cliente']} - {row['Razon social']}",
+            f"   SKU EDF: {row['SKU EDF']}",
+            f"   Modelo: {row['Modelo']}",
+            f"   Nro de serie: {row['Nro de serie']}",
+        ])
+        if index < len(rows):
+            lines.append("")
     return "\n".join(lines)
 
 
