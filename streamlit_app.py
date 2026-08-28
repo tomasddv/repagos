@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
@@ -9,7 +10,13 @@ from edf_importer import DRIVE_URL, import_data
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
+MAIL_SETTINGS_PATH = ROOT / "data" / "mail_settings.json"
 APP_VERSION = "periodo-sin-total-2026-08-03"
+
+DEFAULT_TEMPLATES = {
+    "COMODATO": "Buenas,\n\nSolicito gestionar el comodato de los siguientes EDF:\n\n{{edf_table}}\n\nGracias.",
+    "CONTRA COMODATO": "Buenas,\n\nSolicito gestionar el contra comodato de los siguientes EDF:\n\n{{edf_table}}\n\nGracias.",
+}
 
 
 st.set_page_config(page_title="EDF Repago", page_icon="EDF", layout="wide")
@@ -67,6 +74,64 @@ def load_db_from_upload(uploaded_file):
     if uploaded_file is None:
         return None
     return json.loads(uploaded_file.getvalue().decode("utf-8"))
+
+
+def load_mail_settings(db):
+    supervisors = sorted({
+        customer.get("supervisor") or "Sin supervisor"
+        for customer in db.get("customers", [])
+    })
+    if MAIL_SETTINGS_PATH.exists():
+        settings = json.loads(MAIL_SETTINGS_PATH.read_text(encoding="utf-8"))
+    else:
+        settings = {}
+    saved_rows = {
+        row.get("supervisor"): row.get("recipients", "")
+        for row in settings.get("supervisorRecipients", [])
+        if row.get("supervisor")
+    }
+    supervisor_rows = [
+        {"supervisor": supervisor, "recipients": saved_rows.get(supervisor, "")}
+        for supervisor in supervisors
+    ]
+    for supervisor, recipients in saved_rows.items():
+        if supervisor not in supervisors:
+            supervisor_rows.append({"supervisor": supervisor, "recipients": recipients})
+    return {
+        "supervisorRecipients": supervisor_rows,
+        "templates": {**DEFAULT_TEMPLATES, **settings.get("templates", {})},
+    }
+
+
+def save_mail_settings(settings):
+    MAIL_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MAIL_SETTINGS_PATH.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def customer_name(customer):
+    if not customer:
+        return ""
+    return customer.get("legalName") or customer.get("fantasyName") or customer.get("name") or ""
+
+
+def build_mail_table(rows):
+    lines = ["SKU EDF | Modelo | Nro de serie | Codigo cliente | Razon social"]
+    for row in rows:
+        lines.append(
+            f"{row['SKU EDF']} | {row['Modelo']} | {row['Nro de serie']} | "
+            f"{row['Codigo cliente']} | {row['Razon social']}"
+        )
+    return "\n".join(lines)
+
+
+def build_mail_body(template, table_text):
+    if "{{edf_table}}" in template:
+        return template.replace("{{edf_table}}", table_text)
+    return f"{template}\n\n{table_text}"
+
+
+def mailto_url(recipients, subject, body):
+    return f"mailto:{quote(recipients)}?subject={quote(subject)}&body={quote(body)}"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -494,7 +559,7 @@ c2.metric("Disponibles", len(available))
 c3.metric("En PDV", len(placed))
 c4.metric("Bajo 75%", len(under_75))
 
-tab_repago, tab_clientes, tab_oportunidad, tab_rankings = st.tabs(["Repago", "Clientes", "Oportunidad EDF", "Rankings"])
+tab_repago, tab_clientes, tab_oportunidad, tab_rankings, tab_mails = st.tabs(["Repago", "Clientes", "Oportunidad EDF", "Rankings", "Mails"])
 
 with tab_repago:
     st.subheader("Listado de repago")
@@ -555,3 +620,116 @@ with tab_rankings:
         st.bar_chart(ranking.set_index("Cliente")["RepagoPromedio"].head(15))
     else:
         st.info("No hay EDF en PDV para rankear.")
+
+with tab_mails:
+    st.subheader("Plantilla de solicitud EDF")
+    st.caption("Los EDF y clientes salen de la misma base importada desde Drive.")
+    mail_settings = load_mail_settings(db)
+    customer_lookup = {str(customer.get("id")): customer for customer in db.get("customers", [])}
+
+    settings_col, preview_col = st.columns([1, 1])
+    with settings_col:
+        request_type = st.selectbox("Tipo de solicitud", ["COMODATO", "CONTRA COMODATO"], key="mail_type")
+        supervisor_options = [row["supervisor"] for row in mail_settings["supervisorRecipients"]]
+        selected_supervisor = st.selectbox("Supervisor", supervisor_options, key="mail_supervisor")
+        recipients_by_supervisor = {
+            row["supervisor"]: row.get("recipients", "")
+            for row in mail_settings["supervisorRecipients"]
+        }
+        recipients = st.text_input("Destinatarios", value=recipients_by_supervisor.get(selected_supervisor, ""), key="mail_recipients")
+
+        st.markdown("**Buscar EDF**")
+        mail_search_by = st.selectbox("Buscar EDF por", ["Todo", "SKU / activo", "Serie", "Codigo cliente"], key="mail_search_by")
+        mail_query = st.text_input("Buscar EDF", placeholder="Serie, activo o codigo de cliente", key="mail_query")
+        mail_df = edf_df.copy()
+        if mail_query:
+            q = mail_query.lower().strip()
+            if mail_search_by == "SKU / activo":
+                mail_df = mail_df[mail_df["Activo"].astype(str).str.lower().str.contains(q, na=False)]
+            elif mail_search_by == "Serie":
+                mail_df = mail_df[mail_df["Serie"].astype(str).str.lower().str.contains(q, na=False)]
+            elif mail_search_by == "Codigo cliente":
+                code_series = mail_df["Codigo cliente"].astype(str).str.replace(r"\.0$", "", regex=True).str.lower()
+                mail_df = mail_df[code_series.str.startswith(q, na=False) | code_series.eq(q)]
+            else:
+                mail_df = mail_df[mail_df.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)]
+        mail_df = mail_df.head(150)
+        option_labels = {}
+        for index, row in enumerate(mail_df.to_dict("records")):
+            label = (
+                f"{row.get('Activo') or 'Sin SKU'} | {row.get('Serie') or 'Sin serie'} | "
+                f"{row.get('Modelo')} | {row.get('Codigo cliente') or 'sin cliente'}"
+            )
+            option_labels[f"{label} #{index + 1}"] = row
+        selected_labels = st.multiselect("EDF para incluir", list(option_labels.keys()), key="mail_selected_edfs")
+
+        template = st.text_area(
+            "Cuerpo base",
+            value=mail_settings["templates"].get(request_type, DEFAULT_TEMPLATES[request_type]),
+            height=220,
+            key=f"mail_current_template_{request_type}",
+        )
+
+    selected_rows = []
+    with preview_col:
+        st.markdown("**Detalle EDF**")
+        for index, label in enumerate(selected_labels):
+            source = option_labels[label]
+            edf_key = f"{source.get('Activo')}-{source.get('Serie')}-{index}"
+            customer_code = str(source.get("Codigo cliente") or "")
+            social_reason = str(source.get("Razon social") or source.get("Nombre fantasia") or source.get("Cliente") or "")
+            if request_type == "COMODATO":
+                customer_code = st.text_input(
+                    f"Codigo cliente para {source.get('Serie') or source.get('Activo')}",
+                    value="",
+                    key=f"mail_customer_{edf_key}",
+                )
+                customer = customer_lookup.get(customer_code)
+                social_reason = customer_name(customer)
+            selected_rows.append({
+                "SKU EDF": source.get("Activo") or "Sin SKU",
+                "Modelo": source.get("Modelo") or "",
+                "Nro de serie": source.get("Serie") or "",
+                "Codigo cliente": customer_code,
+                "Razon social": social_reason,
+            })
+
+        detail_df = pd.DataFrame(selected_rows)
+        if not detail_df.empty:
+            st.dataframe(detail_df, width="stretch", hide_index=True)
+        else:
+            st.info("Selecciona uno o mas EDF para armar el mail.")
+
+    table_text = build_mail_table(selected_rows)
+    body = build_mail_body(template, table_text)
+    subject = f"[EDF] Solicitud {request_type} - {len(selected_rows)} equipo(s) - {selected_supervisor}"
+
+    action_col1, action_col2 = st.columns([1, 1])
+    with action_col1:
+        if selected_rows:
+            st.link_button("Abrir mail", mailto_url(recipients, subject, body))
+        st.download_button("Descargar cuerpo TXT", body.encode("utf-8"), "solicitud_edf.txt", "text/plain")
+    with action_col2:
+        st.text_area("Mail generado", value=body, height=260, key="mail_generated_body")
+
+    st.divider()
+    st.markdown("**Destinatarios por supervisor**")
+    recipients_df = pd.DataFrame(mail_settings["supervisorRecipients"])
+    edited_recipients = st.data_editor(recipients_df, width="stretch", hide_index=True, num_rows="dynamic", key="mail_recipients_editor")
+
+    st.markdown("**Plantillas guardadas**")
+    template_comodato = st.text_area("Plantilla comodato", value=mail_settings["templates"].get("COMODATO", DEFAULT_TEMPLATES["COMODATO"]), height=160, key="mail_template_comodato")
+    template_contra = st.text_area("Plantilla contra comodato", value=mail_settings["templates"].get("CONTRA COMODATO", DEFAULT_TEMPLATES["CONTRA COMODATO"]), height=160, key="mail_template_contra")
+    if st.button("Guardar configuracion de mails"):
+        saved_templates = {
+            "COMODATO": template_comodato,
+            "CONTRA COMODATO": template_contra,
+        }
+        saved_templates[request_type] = template
+        saved_settings = {
+            "supervisorRecipients": edited_recipients.fillna("").to_dict("records"),
+            "templates": saved_templates,
+        }
+        save_mail_settings(saved_settings)
+        st.success("Configuracion guardada.")
+        st.rerun()
