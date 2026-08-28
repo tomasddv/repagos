@@ -108,6 +108,26 @@ def first(row, names):
     return ""
 
 
+def first_with_column(row, names):
+    for name in names:
+        if name in row and clean(row[name]):
+            return clean(row[name]), name
+    return "", ""
+
+
+def next_column_value(row, column):
+    if not column:
+        return ""
+    columns = list(row.keys())
+    try:
+        index = columns.index(column)
+    except ValueError:
+        return ""
+    if index + 1 >= len(columns):
+        return ""
+    return clean(row.get(columns[index + 1]))
+
+
 def normalize_columns(df):
     df = df.copy()
     df.columns = [key(col) or f"col{i}" for i, col in enumerate(df.columns)]
@@ -205,6 +225,13 @@ def guess_model(row):
     if model_code == "M" or "MOST" in raw:
         return "Mostrador"
     return "Mostrador"
+
+
+def guess_model_from_value(value):
+    text = clean(value)
+    if not text:
+        return ""
+    return guess_model({"modelo": text, "descproducto": text})
 
 
 def business_from_value(value, category="", brand=""):
@@ -467,9 +494,21 @@ def import_data(sync=False, folder_url=DRIVE_URL):
     seen = {}
     for row in semaforo.to_dict("records"):
         serial = first(row, ["nroserie", "numerodeserie", "serie", "serial"])
-        asset = first(row, ["nrodeactivo", "numerodeactivo", "activo", "nroactivo"]) or asset_by_serial.get(serial, "")
+        asset, asset_column = first_with_column(row, [
+            "nrodeactivo",
+            "numerodeactivo",
+            "activo",
+            "nroactivo",
+            "skuedf",
+            "sku",
+            "codproducto",
+            "codigoproducto",
+        ])
+        asset = asset or asset_by_serial.get(serial, "")
         if not serial and not asset:
             continue
+        adjacent_model = guess_model_from_value(next_column_value(row, asset_column)) if asset_column in {"skuedf", "sku", "codproducto", "codigoproducto"} else ""
+        explicit_model = guess_model_from_value(first(row, ["modelo", "codmodelo", "descproducto", "descripcionarticulo", "producto"]))
         customer_id = code(first(row, ["codcliente", "cliente", "codigocliente", "nrocliente"]))
         if customer_id == "0":
             customer_id = ""
@@ -480,7 +519,7 @@ def import_data(sync=False, folder_url=DRIVE_URL):
             "id": "",
             "asset": asset,
             "serial": serial,
-            "model": guess_model(row),
+            "model": adjacent_model or explicit_model or guess_model(row),
             "business": business_from_edf(row),
             "status": normalize_status(first(row, ["ubicacion", "origen", "descdeposito", "relaciondeposucursal"]), customer_id),
             "deposit": deposit_from(row),
