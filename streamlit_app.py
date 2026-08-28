@@ -659,6 +659,8 @@ with tab_mails:
             else:
                 mail_df = mail_df[mail_df.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)]
         mail_df = mail_df.head(150)
+        if "mail_edf_items" not in st.session_state:
+            st.session_state["mail_edf_items"] = []
         option_labels = {}
         for index, row in enumerate(mail_df.to_dict("records")):
             label = (
@@ -666,7 +668,23 @@ with tab_mails:
                 f"{row.get('Modelo semaforo') or row.get('Modelo')} | {row.get('Codigo cliente') or 'sin cliente'}"
             )
             option_labels[f"{label} #{index + 1}"] = row
-        selected_labels = st.multiselect("EDF para incluir", list(option_labels.keys()), key="mail_selected_edfs")
+        selected_label = st.selectbox("EDF encontrado", [""] + list(option_labels.keys()), key="mail_edf_to_add")
+        add_col, clear_col = st.columns([1, 1])
+        with add_col:
+            if st.button("Agregar EDF al mail", disabled=not selected_label):
+                source = option_labels[selected_label]
+                item_key = f"{source.get('Activo')}|{source.get('Serie')}|{source.get('Codigo cliente')}"
+                existing_keys = {
+                    f"{item.get('Activo')}|{item.get('Serie')}|{item.get('Codigo cliente')}"
+                    for item in st.session_state["mail_edf_items"]
+                }
+                if item_key not in existing_keys:
+                    st.session_state["mail_edf_items"].append(source)
+                st.rerun()
+        with clear_col:
+            if st.button("Vaciar mail", disabled=not st.session_state["mail_edf_items"]):
+                st.session_state["mail_edf_items"] = []
+                st.rerun()
 
         template = st.text_area(
             "Cuerpo base",
@@ -678,9 +696,18 @@ with tab_mails:
     selected_rows = []
     with preview_col:
         st.markdown("**Detalle EDF**")
-        for index, label in enumerate(selected_labels):
-            source = option_labels[label]
+        for index, source in enumerate(st.session_state["mail_edf_items"]):
             edf_key = f"{source.get('Activo')}-{source.get('Serie')}-{index}"
+            header_col, remove_col = st.columns([5, 1])
+            with header_col:
+                st.caption(
+                    f"{source.get('Activo') or 'Sin SKU'} · {source.get('Serie') or 'Sin serie'} · "
+                    f"{source.get('Codigo cliente') or 'sin cliente'}"
+                )
+            with remove_col:
+                if st.button("Quitar", key=f"remove_mail_edf_{edf_key}"):
+                    st.session_state["mail_edf_items"].pop(index)
+                    st.rerun()
             customer_code = str(source.get("Codigo cliente") or "")
             social_reason = str(source.get("Razon social") or source.get("Nombre fantasia") or source.get("Cliente") or "")
             if request_type == "COMODATO":
