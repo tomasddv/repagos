@@ -1,17 +1,20 @@
 import json
+import re
 from pathlib import Path
 from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
 
-from edf_importer import DRIVE_URL, import_data
+from edf_importer import DRIVE_URL, clean, code, import_data
 
 
 ROOT = Path(__file__).parent
 DATA_PATH = ROOT / "data" / "db.json"
 MAIL_SETTINGS_PATH = ROOT / "data" / "mail_settings.json"
 APP_VERSION = "periodo-sin-total-2026-08-03"
+FORMS_SHEET_ID = "1riJFa2mEvFxY7c4YF4zsZ--9mclIsuOqXqHLD-o6slw"
+FORMS_GID = "842725206"
 
 DEFAULT_TEMPLATES = {
     "COMODATO": "Buenas,\n\nSolicito gestionar el comodato de los siguientes EDF:\n\n{{edf_table}}\n\nGracias.",
@@ -136,6 +139,60 @@ def build_mail_body(template, table_text):
 
 def mailto_url(recipients, subject, body):
     return f"mailto:{quote(recipients)}?subject={quote(subject)}&body={quote(body)}"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_forms_requests():
+    url = f"https://docs.google.com/spreadsheets/d/{FORMS_SHEET_ID}/export?format=csv&gid={FORMS_GID}"
+    return pd.read_csv(url, dtype=str).fillna("")
+
+
+def normalized_lookup_value(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+
+def request_type(value):
+    text = clean(value).lower()
+    if "contra" in text:
+        return "CONTRA COMODATO"
+    return "COMODATO"
+
+
+def build_forms_request_rows(db, edf_df, forms_df):
+    customers = {str(customer.get("id")): customer for customer in db.get("customers", [])}
+    edf_by_serial = {}
+    edf_by_asset = {}
+    for row in edf_df.to_dict("records"):
+        serial_key = normalized_lookup_value(row.get("Serie"))
+        asset_key = normalized_lookup_value(row.get("Activo"))
+        if serial_key:
+            edf_by_serial.setdefault(serial_key, row)
+        if asset_key:
+            edf_by_asset.setdefault(asset_key, row)
+
+    rows = []
+    for index, row in forms_df.iterrows():
+        customer_code = code(row.get("Codigo de cliente"))
+        serial = clean(row.get("N° DE SERIE"))
+        asset = clean(row.get("N° DE ACTIVO"))
+        edf_match = edf_by_serial.get(normalized_lookup_value(serial)) or edf_by_asset.get(normalized_lookup_value(asset)) or {}
+        customer = customers.get(customer_code) or {}
+        supervisor = customer.get("supervisor") or edf_match.get("Supervisor") or "Sin supervisor"
+        social_reason = customer_name(customer) or clean(row.get("Denominacion"))
+        model = edf_match.get("Modelo semaforo") or clean(row.get("Tipo de edf")) or edf_match.get("Modelo") or ""
+        rows.append({
+            "ID": index + 2,
+            "Fecha": clean(row.get("Marca temporal")),
+            "Tipo": request_type(row.get("Elija una opción")),
+            "Codigo cliente": customer_code,
+            "Razon social": social_reason,
+            "Supervisor": supervisor,
+            "SKU EDF": edf_match.get("Activo") or asset or "Sin SKU",
+            "Modelo": model,
+            "Nro de serie": edf_match.get("Serie") or serial,
+            "Observaciones": clean(row.get("OBSERVACIONES")),
+        })
+    return pd.DataFrame(rows)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -631,6 +688,80 @@ with tab_mails:
     st.caption("Los EDF y clientes salen de la misma base importada desde Drive.")
     mail_settings = load_mail_settings(db)
     customer_lookup = {str(customer.get("id")): customer for customer in db.get("customers", [])}
+    if "mail_edf_items" not in st.session_state:
+        st.session_state["mail_edf_items"] = []
+
+    st.markdown("**Solicitudes del Forms**")
+    try:
+        forms_df = build_forms_request_rows(db, edf_df, load_forms_requests())
+        if forms_df.empty:
+            st.info("El Forms no tiene solicitudes cargadas.")
+        else:
+            forms_df["Fecha carga"] = pd.to_datetime(forms_df["Fecha"], dayfirst=True, errors="coerce").dt.date
+            available_dates = forms_df["Fecha carga"].dropna()
+            if not available_dates.empty:
+                min_form_date = available_dates.min()
+                max_form_date = available_dates.max()
+                default_start = max(min_form_date, (pd.Timestamp(max_form_date) - pd.Timedelta(days=7)).date())
+                date_col1, date_col2 = st.columns(2)
+                start_date = date_col1.date_input("Desde Forms", value=default_start, min_value=min_form_date, max_value=max_form_date, key="forms_start_date")
+                end_date = date_col2.date_input("Hasta Forms", value=max_form_date, min_value=min_form_date, max_value=max_form_date, key="forms_end_date")
+                forms_df = forms_df[
+                    (forms_df["Fecha carga"] >= start_date)
+                    & (forms_df["Fecha carga"] <= end_date)
+                ]
+            alert_df = (
+                forms_df.groupby(["Supervisor", "Tipo"], as_index=False)
+                .agg(Solicitudes=("ID", "count"))
+                .sort_values(["Supervisor", "Tipo"])
+            )
+            if alert_df.empty:
+                st.info("No hay solicitudes del Forms en el rango seleccionado.")
+            else:
+                st.dataframe(alert_df, width="stretch", hide_index=True)
+            forms_filter_col1, forms_filter_col2, forms_filter_col3 = st.columns(3)
+            form_supervisor = forms_filter_col1.selectbox("Supervisor Forms", ["Todos"] + sorted(forms_df["Supervisor"].dropna().unique().tolist()), key="forms_supervisor")
+            form_type = forms_filter_col2.selectbox("Tipo Forms", ["Todos"] + sorted(forms_df["Tipo"].dropna().unique().tolist()), key="forms_type")
+            form_query = forms_filter_col3.text_input("Buscar Forms", placeholder="Codigo, razon social o serie", key="forms_query")
+            forms_filtered = forms_df.copy()
+            if form_supervisor != "Todos":
+                forms_filtered = forms_filtered[forms_filtered["Supervisor"] == form_supervisor]
+            if form_type != "Todos":
+                forms_filtered = forms_filtered[forms_filtered["Tipo"] == form_type]
+            if form_query:
+                q_forms = form_query.lower().strip()
+                forms_filtered = forms_filtered[forms_filtered.apply(lambda row: q_forms in " ".join(map(str, row.values)).lower(), axis=1)]
+            form_labels = {}
+            for row in forms_filtered.head(200).to_dict("records"):
+                label = f"{row['ID']} | {row['Tipo']} | {row['Codigo cliente']} | {row['Razon social']} | Serie {row['Nro de serie']}"
+                form_labels[label] = row
+            selected_form_labels = st.multiselect("Solicitudes para sumar al mail", list(form_labels.keys()), key="forms_selected_rows")
+            if st.button("Agregar solicitudes del Forms al mail", disabled=not selected_form_labels):
+                existing_keys = {
+                    f"{item.get('Activo')}|{item.get('Serie')}|{item.get('Codigo cliente')}"
+                    for item in st.session_state["mail_edf_items"]
+                }
+                for label in selected_form_labels:
+                    row = form_labels[label]
+                    item = {
+                        "Activo": row["SKU EDF"],
+                        "Serie": row["Nro de serie"],
+                        "Modelo": row["Modelo"],
+                        "Modelo semaforo": row["Modelo"],
+                        "Codigo cliente": row["Codigo cliente"],
+                        "Cliente": row["Razon social"],
+                        "Nombre fantasia": row["Razon social"],
+                        "Razon social": row["Razon social"],
+                    }
+                    item_key = f"{item.get('Activo')}|{item.get('Serie')}|{item.get('Codigo cliente')}"
+                    if item_key not in existing_keys:
+                        st.session_state["mail_edf_items"].append(item)
+                        existing_keys.add(item_key)
+                st.rerun()
+            st.dataframe(forms_filtered, width="stretch", hide_index=True)
+    except Exception as exc:
+        st.warning("No se pudo leer el Sheet de respuestas del Forms. Revisa que este compartido por enlace.")
+        st.exception(exc)
 
     settings_col, preview_col = st.columns([1, 1])
     with settings_col:
@@ -659,8 +790,6 @@ with tab_mails:
             else:
                 mail_df = mail_df[mail_df.apply(lambda row: q in " ".join(map(str, row.values)).lower(), axis=1)]
         mail_df = mail_df.head(150)
-        if "mail_edf_items" not in st.session_state:
-            st.session_state["mail_edf_items"] = []
         option_labels = {}
         for index, row in enumerate(mail_df.to_dict("records")):
             label = (
@@ -711,10 +840,12 @@ with tab_mails:
             customer_code = str(source.get("Codigo cliente") or "")
             social_reason = str(source.get("Razon social") or source.get("Nombre fantasia") or source.get("Cliente") or "")
             if request_type == "COMODATO":
+                customer_input_key = f"mail_customer_{edf_key}"
+                if customer_input_key not in st.session_state:
+                    st.session_state[customer_input_key] = customer_code
                 customer_code = st.text_input(
                     f"Codigo cliente para {source.get('Serie') or source.get('Activo')}",
-                    value="",
-                    key=f"mail_customer_{edf_key}",
+                    key=customer_input_key,
                 )
                 customer = customer_lookup.get(customer_code)
                 social_reason = customer_name(customer)
